@@ -1,6 +1,7 @@
+using Instructor.NET.Models;
 using System.Text.Json.Serialization;
 
-namespace Instructor.NET.Models;
+namespace Instructor.NET.Tests;
 
 public class UserProfile : ResponseModel
 {

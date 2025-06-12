@@ -1,52 +1,71 @@
-using System.Text.Json;
-using Azure.AI.OpenAI;
 using Instructor.NET.Models;
+using OpenAI;
+using OpenAI.Chat;
+using System.ClientModel;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Schema;
 
 namespace Instructor.NET.OpenAI;
 
 public class InstructorClient
 {
     private readonly OpenAIClient _client;
-    private readonly JsonSerializerOptions _jsonOptions;
+    private readonly static JsonSerializerOptions _jsonOptions = new(JsonSerializerOptions.Default)
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    private readonly static JsonSchemaExporterOptions _exporterOptions = new()
+    {
+        TransformSchemaNode = (context, schema) =>
+        {
+            // Determine if a type or property and extract the relevant attribute provider.
+            ICustomAttributeProvider? attributeProvider = context.PropertyInfo is not null
+                ? context.PropertyInfo.AttributeProvider
+                : context.TypeInfo.Type;
+
+            // Look up any description attributes.
+            DescriptionAttribute? descriptionAttr = attributeProvider?
+                .GetCustomAttributes(inherit: true)
+                .Select(attr => attr as DescriptionAttribute)
+                .FirstOrDefault(attr => attr is not null);
+
+            // Apply description attribute to the generated schema.
+            if (descriptionAttr != null)
+            {
+                if (schema is not JsonObject jObj)
+                {
+                    // Handle the case where the schema is a Boolean.
+                    JsonValueKind valueKind = schema.GetValueKind();
+                    Debug.Assert(valueKind is JsonValueKind.True or JsonValueKind.False);
+                    schema = jObj = new JsonObject();
+                    if (valueKind is JsonValueKind.False)
+                    {
+                        jObj.Add("not", true);
+                    }
+                }
+
+                jObj.Insert(0, "description", descriptionAttr.Description);
+            }
+
+            return schema;
+        }
+    };
 
     public InstructorClient(string apiKey, string? endpoint = null)
     {
         _client = string.IsNullOrEmpty(endpoint)
             ? new OpenAIClient(apiKey)
-            : new OpenAIClient(new Uri(endpoint), new Azure.AzureKeyCredential(apiKey));
-
-        _jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-    }
-
-    public async Task<T> CreateCompletion<T>(string prompt, string model = "gpt-4") where T : ResponseModel
-    {
-        var chatCompletionsOptions = new ChatCompletionsOptions
-        {
-            Messages =
+            : new OpenAIClient(new ApiKeyCredential(apiKey), new OpenAIClientOptions
             {
-                new ChatMessage(ChatRole.System, "You are a helpful assistant that responds in JSON format."),
-                new ChatMessage(ChatRole.User, prompt)
-            },
-            Temperature = 0.7f,
-            MaxTokens = 800,
-            NucleusSamplingFactor = 0.95f,
-            FrequencyPenalty = 0,
-            PresencePenalty = 0,
-        };
-
-        var response = await _client.GetChatCompletionsAsync(model, chatCompletionsOptions);
-        var jsonResponse = response.Value.Choices[0].Message.Content;
-
-        var result = JsonSerializer.Deserialize<T>(jsonResponse, _jsonOptions);
-        if (result != null)
-        {
-            result.RawResponse = jsonResponse;
-        }
-        return result ?? throw new InvalidOperationException("Failed to deserialize response");
+                Endpoint = new Uri(endpoint)
+            });
     }
 
     public async Task<T> CreateStructuredOutput<T>(
@@ -56,10 +75,7 @@ public class InstructorClient
         int maxTokens = 800) where T : ResponseModel
     {
         // Get the schema for type T
-        var schema = JsonSerializer.SerializeToDocument(
-            new { type = typeof(T).Name, properties = typeof(T).GetProperties() },
-            _jsonOptions
-        ).RootElement.ToString();
+        var schema = _jsonOptions.GetJsonSchemaAsNode(typeof(T), _exporterOptions);
 
         var systemPrompt = $@"
 You are a helpful assistant that generates structured data.
@@ -69,24 +85,25 @@ You must respond with valid JSON that matches the following schema:
 Format your entire response as JSON that can be parsed by a JSON parser.
 ";
 
-        var chatCompletionsOptions = new ChatCompletionsOptions
+        var chatCompletionsOptions = new ChatCompletionOptions
         {
-            Messages =
-            {
-                new ChatMessage(ChatRole.System, systemPrompt),
-                new ChatMessage(ChatRole.User, prompt)
-            },
             Temperature = temperature,
-            MaxTokens = maxTokens,
-            NucleusSamplingFactor = 0.95f,
+            MaxOutputTokenCount = maxTokens,
+            //NucleusSamplingFactor = 0.95f,
             FrequencyPenalty = 0,
             PresencePenalty = 0,
         };
 
-        var response = await _client.GetChatCompletionsAsync(model, chatCompletionsOptions);
-        var jsonResponse = response.Value.Choices[0].Message.Content;
+        ChatMessage[] messages = [
+            ChatMessage.CreateSystemMessage(systemPrompt),
+            ChatMessage.CreateUserMessage(prompt)
+        ];
 
-        var result = JsonSerializer.Deserialize<T>(jsonResponse, _jsonOptions);
+        var chatClient = _client.GetChatClient(model);
+        var response = await chatClient.CompleteChatAsync(messages, chatCompletionsOptions);
+        var jsonResponse = response.Value.Content[0].Text ?? string.Empty;
+
+        var result = JsonExtractor.ExtractObject<T>(jsonResponse);
         if (result != null)
         {
             result.RawResponse = jsonResponse;

@@ -1,4 +1,3 @@
-using Instructor.NET.Models;
 using Instructor.NET.OpenAI;
 using Xunit;
 
@@ -29,24 +28,6 @@ public class InstructorClientTests
         Assert.Equal(30, result.Age);
         Assert.Equal("john@example.com", result.Email);
         Assert.Equal("Python", result.PreferredLanguage);
-        Assert.NotNull(result.RawResponse);
-    }
-
-    [Fact]
-    public async Task CreateCompletion_ShouldReturnValidUserProfile()
-    {
-        // Arrange
-        var prompt = "Create a JSON profile for a software developer with the following properties: name, age, email, and preferred_language";
-
-        // Act
-        var result = await _client.CreateCompletion<UserProfile>(prompt);
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.NotEmpty(result.Name);
-        Assert.True(result.Age > 0);
-        Assert.NotEmpty(result.Email);
-        Assert.NotEmpty(result.PreferredLanguage);
         Assert.NotNull(result.RawResponse);
     }
 }
