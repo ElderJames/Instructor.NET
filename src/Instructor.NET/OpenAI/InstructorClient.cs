@@ -72,7 +72,7 @@ public class InstructorClient
         string prompt,
         string model = "gpt-4",
         float temperature = 0.7f,
-        int maxTokens = 800) where T : ResponseModel
+        int maxTokens = 800)
     {
         // Get the schema for type T
         var schema = _jsonOptions.GetJsonSchemaAsNode(typeof(T), _exporterOptions);
@@ -104,9 +104,9 @@ Format your entire response as JSON that can be parsed by a JSON parser.
         var jsonResponse = response.Value.Content[0].Text ?? string.Empty;
 
         var result = JsonExtractor.ExtractObject<T>(jsonResponse);
-        if (result != null)
+        if (result != null && result is ResponseModel responseModel)
         {
-            result.RawResponse = jsonResponse;
+            responseModel.RawResponse = jsonResponse;
         }
         return result ?? throw new InvalidOperationException("Failed to deserialize response");
     }

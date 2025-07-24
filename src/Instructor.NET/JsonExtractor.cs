@@ -1,12 +1,12 @@
-﻿using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace Instructor.NET
@@ -16,6 +16,12 @@ namespace Instructor.NET
     /// </summary>
     public static class JsonExtractor
     {
+        private static readonly JsonSerializerOptions DefaultSerializerOptions = new()
+        {
+            WriteIndented = true,
+            PropertyNameCaseInsensitive = true
+        };
+
         /// <summary>
         /// Extracts a JSON string from text
         /// </summary>
@@ -184,8 +190,7 @@ namespace Instructor.NET
 
             try
             {
-                // Try to parse using Newtonsoft.Json
-                JToken.Parse(json);
+                using var doc = JsonDocument.Parse(json);
                 return true;
             }
             catch
@@ -395,7 +400,7 @@ namespace Instructor.NET
                 if (string.IsNullOrEmpty(json))
                     return false;
 
-                result = JsonConvert.DeserializeObject<T>(json);
+                result = JsonSerializer.Deserialize<T>(json, DefaultSerializerOptions);
                 return result != null;
             }
             catch
@@ -514,7 +519,7 @@ namespace Instructor.NET
                         string arrayJson = arrayMatch.Value;
                         if (IsValidJson(arrayJson))
                         {
-                            return JsonConvert.DeserializeObject<T>(arrayJson);
+                            return JsonSerializer.Deserialize<T>(arrayJson, DefaultSerializerOptions);
                         }
                     }
 
@@ -531,7 +536,7 @@ namespace Instructor.NET
                     // Ensure JSON starts with [, so it can be deserialized as an array
                     if (json.TrimStart().StartsWith("["))
                     {
-                        return JsonConvert.DeserializeObject<T>(json);
+                        return JsonSerializer.Deserialize<T>(json, DefaultSerializerOptions);
                     }
                 }
 
@@ -551,12 +556,12 @@ namespace Instructor.NET
                     // Ensure JSON starts with {, so it can be deserialized as an object
                     if (json.TrimStart().StartsWith("{"))
                     {
-                        return JsonConvert.DeserializeObject<T>(json);
+                        return JsonSerializer.Deserialize<T>(json, DefaultSerializerOptions);
                     }
                 }
 
                 // Try to deserialize directly
-                return JsonConvert.DeserializeObject<T>(json);
+                return JsonSerializer.Deserialize<T>(json, DefaultSerializerOptions);
             }
             catch (Exception ex)
             {
@@ -583,35 +588,31 @@ namespace Instructor.NET
                 if (string.IsNullOrEmpty(json))
                     return null;
 
-                // Try to parse as JObject
+                // Try to parse as JsonObject
                 if (json.TrimStart().StartsWith("{"))
                 {
-                    var jObject = JObject.Parse(json);
+                    using var document = JsonDocument.Parse(json);
                     var result = new Dictionary<string, string>();
 
-                    foreach (var property in jObject.Properties())
+                    foreach (var property in document.RootElement.EnumerateObject())
                     {
                         // Remove quotes from JSON string
-                        result[property.Name] = property.Value.ToString().Trim('"');
+                        result[property.Name] = property.Value.ToString();
                     }
 
                     return result;
                 }
-                // Try to parse as JArray (convert to dictionary with index as key)
+                // Try to parse as JsonArray (convert to dictionary with index as key)
                 else if (json.TrimStart().StartsWith("["))
                 {
-                    var jArray = JArray.Parse(json);
+                    using var document = JsonDocument.Parse(json);
                     var result = new Dictionary<string, string>();
 
-                    for (int i = 0; i < jArray.Count; i++)
+                    int index = 0;
+                    foreach (var element in document.RootElement.EnumerateArray())
                     {
-                        // Remove quotes from JSON string
-                        string value = jArray[i].ToString();
-                        // If simple string value, remove quotes
-                        if (jArray[i].Type == JTokenType.String)
-                            value = value.Trim('"');
-
-                        result[i.ToString()] = value;
+                        result[index.ToString()] = element.ToString();
+                        index++;
                     }
 
                     return result;
@@ -626,11 +627,11 @@ namespace Instructor.NET
         }
 
         /// <summary>
-        /// Extracts a JSON object from text and returns a JToken
+        /// Extracts a JSON object from text and returns a JsonNode
         /// </summary>
         /// <param name="text">Text containing JSON</param>
-        /// <returns>The extracted JToken object, or null if failed</returns>
-        public static JToken ExtractJToken(string text)
+        /// <returns>The extracted JsonNode object, or null if failed</returns>
+        public static JsonNode ExtractJsonNode(string text)
         {
             try
             {
@@ -638,7 +639,7 @@ namespace Instructor.NET
                 if (string.IsNullOrEmpty(json))
                     return null;
 
-                return JToken.Parse(json);
+                return JsonNode.Parse(json);
             }
             catch
             {
@@ -794,7 +795,7 @@ namespace Instructor.NET
                 var instance = CreateExampleInstance(type);
 
                 // Serialize to JSON
-                return JsonConvert.SerializeObject(instance, Formatting.Indented);
+                return JsonSerializer.Serialize(instance, DefaultSerializerOptions);
             }
             catch
             {
